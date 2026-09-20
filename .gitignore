@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+outputs/
+inputs/
+phone-normalizer-test/
+.DS_Store
+
+# Local caches, credentials, model weights, and reporting exports
+.pytest_cache/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.safetensors
+*.onnx
+*.pt
+*.pth
+wiki-assets/
+飞书*.xml
