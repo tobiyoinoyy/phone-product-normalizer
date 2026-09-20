@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Crop and deskew a BEN2 RGBA cutout without changing its edge alpha.
+"""Crop and deskew a BiRefNet_dynamic RGBA cutout without changing its edge alpha.
 
-This is deliberately a second stage after BEN2.  BEN2 supplies the pixels and
+This is deliberately a second stage after BiRefNet_dynamic.  BiRefNet_dynamic supplies the pixels and
 the continuous alpha matte; this module only uses a thresholded *copy* of the
-alpha channel for geometry.  The output alpha is the original BEN2 alpha,
+alpha channel for geometry.  The output alpha is the original BiRefNet_dynamic alpha,
 except for the region confidently identified as the support/stand.
 
 The stand is not located with a fixed y coordinate.  Instead, the largest
@@ -13,7 +13,7 @@ between the junctions that does not overhang the chord is treated as the stand
 branch.  Only the stand side of that chord, in a narrow contact strip, is
 removed.  If no reliable pair is found, the alpha is left untouched.
 
-OpenCV is imported lazily so the first-stage BEN2/rembg command remains usable
+OpenCV is imported lazily so the first-stage BiRefNet_dynamic command remains usable
 in environments that do not need this optional geometry stage.
 """
 
@@ -842,7 +842,7 @@ def tight_crop(
     if len(xs) == 0:
         return image, (0, 0, image.shape[1], image.shape[0])
     # Remove interpolation specks only outside the selected component.  Alpha
-    # values *inside* the component remain exactly as supplied by BEN2.
+    # values *inside* the component remain exactly as supplied by BiRefNet_dynamic.
     image[..., 3][~geometry] = 0
     image[..., :3][image[..., 3] == 0] = 0
     box = (int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1))
@@ -892,7 +892,7 @@ def process_array(
         image = image.clip(0, 255).astype(np.uint8)
     # With every geometry stage explicitly disabled, honour the caller's
     # request for a true pass-through.  In particular, do not threshold away
-    # low-alpha BEN2 fringe pixels merely to compute a component that will not
+    # low-alpha BiRefNet_dynamic fringe pixels merely to compute a component that will not
     # be used.
     if not remove_support and not deskew and not tight_crop_enabled:
         image[..., :3][image[..., 3] == 0] = 0
@@ -922,7 +922,7 @@ def process_array(
     principal = _main_geometry(clipped_alpha, config.geometry_threshold)
     clipped_alpha[~principal] = 0
     image[..., 3] = clipped_alpha
-    # The source image can contain arbitrary RGB in regions BEN2 marked
+    # The source image can contain arbitrary RGB in regions BiRefNet_dynamic marked
     # transparent.  Clear it before the optional rotation so the no-rotation
     # path and the rotated path have identical, compositor-safe semantics.
     image[..., :3][clipped_alpha == 0] = 0
@@ -961,7 +961,7 @@ def process(
     deskew: bool = True,
     tight_crop_enabled: bool = True,
 ) -> GeometryResult:
-    """Read a BEN2 PNG, process it, and write a transparent PNG."""
+    """Read a BiRefNet_dynamic PNG, process it, and write a transparent PNG."""
 
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -1004,7 +1004,7 @@ def _result_json(result: GeometryResult) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, help="BEN2 RGBA PNG")
+    parser.add_argument("input", type=Path, help="BiRefNet_dynamic RGBA PNG")
     parser.add_argument("output", type=Path, help="processed transparent PNG")
     parser.add_argument("--confidence-floor", type=float, default=0.55)
     parser.add_argument(

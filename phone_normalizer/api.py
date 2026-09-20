@@ -1,15 +1,4 @@
-"""Stable Python API for the phone product normalization pipeline.
-
-This module is intentionally a thin orchestration layer over the project's
-tested implementation in :mod:`scripts.normalize_ben2`.  Keeping the core in
-one place avoids two geometry algorithms drifting apart while giving callers a
-normal installable package and a reusable batch API.
-
-The package-level defaults differ from the historical script on purpose:
-``BiRefNet_dynamic`` is the default backend/model for new delivery code.  The
-legacy ``scripts/normalize_ben2.py`` command still defaults to BEN2 and is not
-modified by this package.
-"""
+"""Python API for BiRefNet_dynamic phone product normalization."""
 
 from __future__ import annotations
 
@@ -25,17 +14,13 @@ try:
     # In a source checkout ``scripts`` is a sibling package.  It is included in
     # the wheel by pyproject.toml as well, so this import also works after
     # installation.
-    from scripts.normalize_ben2 import (
+    from scripts.segmentation import (
         DEFAULT_MAX_GEOMETRY_PIXELS,
         DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE,
         DEFAULT_BIREFNET_MAX_SIDE,
-        DEFAULT_BIREFNET_MODEL,
-        DEFAULT_BEN2_MODEL,
-        DEFAULT_REMBG_MODEL,
         SUPPORTED_DEVICES,
         GeometryConfig,
         NormalizationInfo,
-        available_backends,
         create_segmentation_backend,
         normalize_image,
         _clear_exception_traceback,
@@ -43,7 +28,6 @@ try:
         parse_birefnet_max_side,
         parse_birefnet_resolution,
         parse_max_geometry_pixels,
-        register_backend,
         validate_geometry_size,
     )
 except ModuleNotFoundError as exc:  # pragma: no cover - protects unusual installs
@@ -84,20 +68,13 @@ ProgressCallback = Callable[[int, int, Path], None]
 
 @dataclass(frozen=True)
 class NormalizerConfig:
-    """Configuration for :class:`Normalizer`.
-
-    ``model=None`` means “use the package default for the selected backend”.
-    Consequently a new ``NormalizerConfig()`` uses
-    ``ZhengPeng7/BiRefNet_dynamic`` while selecting ``ben2`` without a model
-    uses the historical BEN2 default.  This avoids accidentally passing a
-    BiRefNet checkpoint to BEN2 when changing only the backend.
-    """
+    """Geometry and device settings for BiRefNet_dynamic."""
 
     backend: str = DEFAULT_BACKEND
     model: Optional[str] = None
     device: str = "auto"
     birefnet_resolution: Any = "auto"
-    alpha_matting: bool = True
+
     geometry_threshold: int = 32
     crop_threshold: int = 8
     max_deskew_degrees: float = 45.0
@@ -122,11 +99,11 @@ class NormalizerConfig:
 
     def __post_init__(self) -> None:
         backend = str(self.backend).strip().lower()
-        if not backend:
-            raise ValueError("backend cannot be empty")
+        if backend != DEFAULT_BACKEND:
+            raise ValueError("Only BiRefNet_dynamic is supported")
+        if self.model not in (None, DEFAULT_MODEL):
+            raise ValueError("Only BiRefNet_dynamic is supported")
         object.__setattr__(self, "backend", backend)
-        if self.model is not None and not str(self.model).strip():
-            raise ValueError("model cannot be an empty string")
         if str(self.device).strip().lower() not in SUPPORTED_DEVICES:
             raise ValueError(
                 f"unsupported device {self.device!r}; choose one of {', '.join(SUPPORTED_DEVICES)}"
@@ -159,40 +136,24 @@ class NormalizerConfig:
     def effective_model(self) -> Optional[str]:
         """Model id passed to the selected backend factory."""
 
-        if self.model is not None:
-            return str(self.model).strip()
-        if self.backend == "birefnet":
-            return DEFAULT_MODEL
-        if self.backend == "ben2":
-            return DEFAULT_BEN2_MODEL
-        if self.backend == "rembg":
-            return DEFAULT_REMBG_MODEL
-        # Custom factories may provide their own model default.  Passing None
-        # preserves that extension point.
-        return None
+        return DEFAULT_MODEL
 
     @property
     def parsed_birefnet_resolution(self) -> Optional[Tuple[int, int]]:
         """Return the parsed BiRefNet resolution, with ``None`` meaning auto."""
 
-        if self.backend != "birefnet":
-            return None
         return parse_birefnet_resolution(self.birefnet_resolution)
 
     @property
     def parsed_birefnet_max_side(self) -> Optional[int]:
         """Return the dynamic long-side cap, or ``None`` when disabled."""
 
-        if self.backend != "birefnet":
-            return None
         return parse_birefnet_max_side(self.birefnet_max_side)
 
     @property
     def parsed_birefnet_cpu_fallback_max_side(self) -> Optional[int]:
         """Return the cap used by the automatic MPS→CPU retry."""
 
-        if self.backend != "birefnet":
-            return None
         return parse_birefnet_max_side(self.birefnet_cpu_fallback_max_side)
 
     def geometry(self) -> GeometryConfig:
@@ -546,7 +507,7 @@ class Normalizer:
                 self.config.backend,
                 model_name=self.config.effective_model,
                 device=self.config.device,
-                alpha_matting=self.config.alpha_matting,
+
                 birefnet_resolution=self.config.parsed_birefnet_resolution,
                 birefnet_max_side=self.config.parsed_birefnet_max_side,
                 birefnet_cpu_fallback_max_side=self.config.parsed_birefnet_cpu_fallback_max_side,
@@ -779,11 +740,9 @@ __all__ = [
     "Normalizer",
     "NormalizerConfig",
     "ProcessingInfo",
-    "available_backends",
     "collect_image_paths",
     "create_segmentation_backend",
     "process_many",
     "parse_max_geometry_pixels",
-    "register_backend",
     "validate_geometry_size",
 ]

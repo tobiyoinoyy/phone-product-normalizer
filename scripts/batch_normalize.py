@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """批量处理手机商品图的设计师友好入口。
 
-这个入口把多个图片交给 ``normalize_ben2.py`` 的正式流程处理，默认使用
+这个入口把多个图片交给 ``segmentation.py`` 的正式流程处理，默认使用
 ``ZhengPeng7/BiRefNet_dynamic``，并把透明 PNG 和可选的 JSON 记录放到一个
-独立的结果文件夹。原有的 ``normalize_ben2.py`` 命令行接口保持不变。
+独立的结果文件夹。
 
 可以直接在终端运行：
 
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
 try:
-    from .normalize_ben2 import (
+    from .segmentation import (
         DEFAULT_MAX_GEOMETRY_PIXELS,
         DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE,
         DEFAULT_BIREFNET_MAX_SIDE,
@@ -35,7 +35,7 @@ try:
         _release_torch_memory,
     )
 except ImportError:  # direct ``python scripts/batch_normalize.py`` execution
-    from normalize_ben2 import (  # type: ignore
+    from segmentation import (  # type: ignore
         DEFAULT_MAX_GEOMETRY_PIXELS,
         DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE,
         DEFAULT_BIREFNET_MAX_SIDE,
@@ -499,11 +499,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"结果文件夹（默认：{DEFAULT_OUTPUT_DIR}）",
     )
     parser.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
-        help=f"BiRefNet 模型（默认：{DEFAULT_MODEL}）",
-    )
-    parser.add_argument(
         "--device",
         default="auto",
         choices=("auto", "cpu", "mps", "cuda"),
@@ -543,7 +538,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
     print(f"正在处理 {len(args.inputs)} 个拖入项目…")
-    print(f"模型：{args.model}    设备：{args.device}")
+    print(f"模型：{DEFAULT_MODEL}    设备：{args.device}")
     print(f"结果：{Path(args.output_dir).expanduser().resolve()}")
     try:
         max_side = parse_birefnet_max_side(args.birefnet_max_side)
@@ -565,7 +560,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         results = process_files(
             args.inputs,
             output_dir=args.output_dir,
-            model_name=args.model,
+            model_name=DEFAULT_MODEL,
             device=args.device,
             recursive=not args.no_recursive,
             save_metadata=not args.no_metadata,

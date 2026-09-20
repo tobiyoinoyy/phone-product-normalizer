@@ -15,7 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="phone-normalizer",
         description=(
-            "批量抠图、去支架、摆正并输出透明 PNG；新入口默认使用 "
+            "批量抠图、去支架、摆正并输出透明 PNG；仅使用 "
             "BiRefNet_dynamic。"
         ),
     )
@@ -25,16 +25,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
         help=f"结果文件夹（默认：{DEFAULT_OUTPUT_DIR}）",
-    )
-    parser.add_argument(
-        "--backend",
-        default=DEFAULT_BACKEND,
-        help="分割后端名称（默认 birefnet；可选 ben2、birefnet、rembg 或已注册后端）",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help=f"模型 id（BiRefNet 默认 {DEFAULT_MODEL}；留空按后端默认）",
     )
     parser.add_argument(
         "--device",
@@ -94,7 +84,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-support-removal", action="store_true")
     parser.add_argument("--no-deskew", action="store_true")
     parser.add_argument("--no-tight-crop", action="store_true")
-    parser.add_argument("--no-alpha-matting", action="store_true")
     parser.add_argument("--no-recursive", action="store_true", help="文件夹只处理第一层")
     parser.add_argument("--no-metadata", action="store_true", help="不写每张图片的 JSON 记录")
     parser.add_argument(
@@ -110,11 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _config_from_args(args: argparse.Namespace) -> NormalizerConfig:
     return NormalizerConfig(
-        backend=args.backend,
-        model=args.model,
         device=args.device,
         birefnet_resolution=args.birefnet_resolution,
-        alpha_matting=not args.no_alpha_matting,
         geometry_threshold=args.geometry_threshold,
         crop_threshold=args.crop_threshold,
         max_deskew_degrees=args.max_deskew_degrees,
@@ -137,7 +123,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         config = _config_from_args(args)
         normalizer = Normalizer(config)
-        print(f"模型：{config.effective_model or '后端自定'}    设备：{config.device}")
+        print(f"模型：{config.effective_model}    设备：{config.device}")
         print(f"结果：{Path(args.output_dir).expanduser().resolve()}")
         if config.backend == "birefnet":
             max_side = config.parsed_birefnet_max_side

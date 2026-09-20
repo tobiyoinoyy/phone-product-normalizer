@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for the selectable segmentation entry point and backends."""
+"""Offline tests for the BiRefNet_dynamic segmentation and geometry pipeline."""
 
 from __future__ import annotations
 
@@ -20,20 +20,15 @@ PROJECT = Path(__file__).resolve().parents[1]
 if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
-from scripts.normalize_ben2 import (  # noqa: E402
+from scripts.segmentation import (  # noqa: E402
     DEFAULT_MAX_GEOMETRY_PIXELS,
     DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE,
     DEFAULT_BIREFNET_MAX_SIDE,
     BiRefNetBackend,
-    Ben2Backend,
     DEFAULT_BIREFNET_MODEL,
-    RembgBackend,
     SegmentationBackend,
-    _build_parser,
-    available_backends,
     create_segmentation_backend,
     normalize_rgba,
-    infer_ben2_alpha,
     normalize_image,
     process_file,
     parse_birefnet_resolution,
@@ -73,14 +68,6 @@ class FakeBackend(SegmentationBackend):
         return Image.merge("RGBA", (*image.convert("RGB").split(), Image.fromarray(self.alpha)))
 
 
-class FakeBen2Model:
-    def __init__(self, alpha: np.ndarray):
-        self.alpha = alpha
-        self.refine_values: list[bool] = []
-
-    def inference(self, image: Image.Image, refine_foreground: bool = True) -> Image.Image:
-        self.refine_values.append(refine_foreground)
-        return Image.merge("RGBA", (*image.convert("RGB").split(), Image.fromarray(self.alpha)))
 
 
 class FakeBiRefNetModel:
@@ -105,66 +92,8 @@ class FakeBiRefNetModel:
         return [torch.full((1, 1, height, width), self.value, device=inputs.device)]
 
 
-def test_backend_registry_and_default() -> None:
-    assert "ben2" in available_backends()
-    assert "rembg" in available_backends()
-    backend = create_segmentation_backend("ben2", model_name="local/test", device="cpu")
-    assert isinstance(backend, Ben2Backend)
-    assert backend.model_name == "local/test"
-    assert backend.device == "cpu"
-    try:
-        create_segmentation_backend("not-a-real-backend")
-    except ValueError as exc:
-        assert "unknown segmentation backend" in str(exc)
-    else:  # pragma: no cover - defensive assertion
-        raise AssertionError("unknown backends must fail explicitly")
-
-    class FutureBackend(SegmentationBackend):
-        name = "future-test"
-
-        def __init__(self, device="auto", **kwargs):
-            super().__init__(model_name="future-default", device=device)
-
-    from scripts.normalize_ben2 import register_backend
-
-    register_backend("future-test", FutureBackend)
-    future = create_segmentation_backend("future-test", device="cpu")
-    assert future.model_name == "future-default"
-
-    birefnet = create_segmentation_backend(
-        "birefnet",
-        model_name="ZhengPeng7/BiRefNet_dynamic",
-        device="cpu",
-        birefnet_resolution=(512, 768),
-    )
-    assert isinstance(birefnet, BiRefNetBackend)
-    assert birefnet.model_name.endswith("BiRefNet_dynamic")
-    assert birefnet.resolution == (512, 768)
-    assert not birefnet.dynamic_resolution
-
-    hr = create_segmentation_backend(
-        "birefnet", model_name="ZhengPeng7/BiRefNet_HR", device="cpu"
-    )
-    assert isinstance(hr, BiRefNetBackend)
-    assert hr.resolution == (2048, 2048)
-    lite = create_segmentation_backend(
-        "birefnet", model_name="ZhengPeng7/BiRefNet_lite-2K", device="cpu"
-    )
-    assert isinstance(lite, BiRefNetBackend)
-    assert lite.resolution == (1440, 2560)
 
 
-def test_ben2_backend_uses_alpha_only() -> None:
-    source, alpha = synthetic_phone_with_stand()
-    fake_model = FakeBen2Model(alpha)
-    backend = Ben2Backend(model=fake_model, device="cpu")
-    result = backend.segment(source)
-    assert result.mode == "RGBA"
-    assert result.size == source.size
-    assert fake_model.refine_values == [False]
-    assert np.array_equal(np.asarray(result.getchannel("A")), alpha)
-    assert np.array_equal(np.asarray(result.convert("RGB")), np.asarray(source))
-    assert np.array_equal(infer_ben2_alpha(fake_model, source), alpha)
 
 
 def test_birefnet_backend_decodes_logits_and_preserves_rgb() -> None:
@@ -327,7 +256,7 @@ def test_birefnet_auxiliary_outputs_are_released_before_decode() -> None:
 def test_birefnet_selects_highest_resolution_prediction() -> None:
     import torch
 
-    from scripts.normalize_ben2 import _birefnet_output_tensor
+    from scripts.segmentation import _birefnet_output_tensor
 
     low = torch.zeros((1, 1, 8, 8))
     high = torch.zeros((1, 1, 16, 16))
@@ -337,7 +266,7 @@ def test_birefnet_selects_highest_resolution_prediction() -> None:
 
 
 def test_birefnet_static_oom_fallback_rebuilds_with_safe_cap() -> None:
-    """Fixed HR/lite checkpoints must not retry their huge shape on CPU."""
+    """Explicit fixed input sizes must not retry their huge shape on CPU."""
 
     import torch
 
@@ -365,7 +294,8 @@ def test_birefnet_static_oom_fallback_rebuilds_with_safe_cap() -> None:
 
     model = OOMOnce()
     backend = BiRefNetBackend(
-        model_name="ZhengPeng7/BiRefNet_HR",
+        model_name=DEFAULT_BIREFNET_MODEL,
+        resolution=(2048, 2048),
         model=model,
         device="cpu",
         cpu_fallback_max_side=1024,
@@ -374,7 +304,7 @@ def test_birefnet_static_oom_fallback_rebuilds_with_safe_cap() -> None:
     backend.device = "mps"
     result = backend.segment(Image.new("RGB", (48, 40), (20, 30, 40)))
     # The bounded CPU mode persists for subsequent batch items; it must not
-    # silently return to the HR checkpoint's 2048² default.
+    # silently return to the requested 2048² size.
     backend.segment(Image.new("RGB", (48, 40), (20, 30, 40)))
     assert result.size == (48, 40)
     assert model.shapes == [
@@ -401,12 +331,12 @@ def test_birefnet_model_load_oom_falls_back_to_cpu() -> None:
             raise RuntimeError("wrapper") from RuntimeError("MPS backend out of memory")
         return FakeLoadedModel()
 
-    backend = BiRefNetBackend(model_name="local/test", device="cpu")
+    backend = BiRefNetBackend(model_name=DEFAULT_BIREFNET_MODEL, device="cpu")
     # Keep construction offline while exercising the accelerator-labelled
     # property path.  ``_release_torch_memory`` is best effort on machines
     # without MPS, so this remains a portable test.
     backend.device = "mps"
-    with patch("scripts.normalize_ben2._load_birefnet_model", fake_loader):
+    with patch("scripts.segmentation._load_birefnet_model", fake_loader):
         assert isinstance(backend.model, FakeLoadedModel)
     assert calls == ["mps", "cpu"]
     assert backend.device == "cpu"
@@ -471,7 +401,7 @@ def test_geometry_guard_runs_before_backend_inference() -> None:
     assert backend.calls == 0
 
     # The same early check must precede construction of a named/lazy backend.
-    with patch("scripts.normalize_ben2.create_segmentation_backend") as factory:
+    with patch("scripts.segmentation.create_segmentation_backend") as factory:
         try:
             normalize_image(oversized, backend_name="fake")
         except ValueError as exc:
@@ -503,7 +433,7 @@ def test_standalone_backend_is_closed_after_success_or_error() -> None:
 
     owned = ClosableBackend(alpha)
     with patch(
-        "scripts.normalize_ben2.create_segmentation_backend",
+        "scripts.segmentation.create_segmentation_backend",
         return_value=owned,
     ) as factory:
         result, info = normalize_image(
@@ -525,7 +455,7 @@ def test_standalone_backend_is_closed_after_success_or_error() -> None:
         source.save(input_path)
         file_owned = ClosableBackend(alpha)
         with patch(
-            "scripts.normalize_ben2.create_segmentation_backend",
+            "scripts.segmentation.create_segmentation_backend",
             return_value=file_owned,
         ):
             file_info = process_file(
@@ -542,7 +472,7 @@ def test_standalone_backend_is_closed_after_success_or_error() -> None:
 
     failing = ClosableBackend(alpha, fail=True)
     with patch(
-        "scripts.normalize_ben2.create_segmentation_backend",
+        "scripts.segmentation.create_segmentation_backend",
         return_value=failing,
     ):
         try:
@@ -626,97 +556,30 @@ def test_process_file_metadata_and_parser_flags() -> None:
         else:  # pragma: no cover - defensive assertion
             raise AssertionError("the input must never be overwritten")
 
-    parser = _build_parser()
-    args = parser.parse_args(
-        [
-            "in.jpg",
-            "out.png",
-            "--backend",
-            "birefnet",
-            "--model",
-            "isnet-general-use",
-            "--birefnet-resolution",
-            "1024x1536",
-            "--device",
-            "cpu",
-            "--max-deskew-degrees",
-            "12",
-            "--crop-threshold",
-            "20",
-            "--confidence-floor",
-            "0.7",
-            "--no-support-removal",
-            "--no-deskew",
-            "--no-tight-crop",
-            "--no-alpha-matting",
-            "--max-geometry-pixels",
-            "1000000",
-        ]
-    )
-    assert args.backend == "birefnet"
-    assert args.model == "isnet-general-use"
-    assert args.birefnet_resolution == "1024x1536"
-    assert args.max_deskew_degrees == 12
-    assert args.crop_threshold == 20
-    assert args.support_min_confidence == 0.7
-    assert args.no_support_removal and args.no_deskew and args.no_tight_crop
-    assert args.no_alpha_matting
-    assert args.max_geometry_pixels == "1000000"
-    defaults = _build_parser().parse_args(["in.jpg", "out.png"])
-    assert defaults.max_geometry_pixels == str(DEFAULT_MAX_GEOMETRY_PIXELS)
 
 
-def test_optional_rembg_backend_with_fake_module() -> None:
-    source, alpha = synthetic_phone_with_stand()
-    rgba = Image.merge("RGBA", (*source.split(), Image.fromarray(alpha)))
-    payload = io.BytesIO()
-    rgba.save(payload, format="PNG")
-    calls: list[tuple[str, object]] = []
-
-    def fake_new_session(model: str) -> object:
-        calls.append(("session", model))
-        return {"model": model}
-
-    def fake_remove(*args: object, **kwargs: object) -> bytes:
-        calls.append(("remove", kwargs.get("session")))
-        return payload.getvalue()
-
-    fake_rembg = SimpleNamespace(new_session=fake_new_session, remove=fake_remove)
-    previous = sys.modules.get("rembg")
-    sys.modules["rembg"] = fake_rembg
-    try:
-        backend = RembgBackend(model_name="u2net", device="cpu", alpha_matting=False)
-        result = backend.segment(source)
-    finally:
-        if previous is None:
-            sys.modules.pop("rembg", None)
+def test_only_dynamic_model_is_supported() -> None:
+    from phone_normalizer import NormalizerConfig
+    for construct in (
+        lambda: create_segmentation_backend("unsupported"),
+        lambda: create_segmentation_backend(model_name="unsupported"),
+        lambda: BiRefNetBackend(model_name="unsupported", device="cpu"),
+        lambda: NormalizerConfig(backend="unsupported"),
+        lambda: NormalizerConfig(model="unsupported"),
+    ):
+        try:
+            construct()
+        except ValueError as exc:
+            assert "Only BiRefNet_dynamic" in str(exc)
         else:
-            sys.modules["rembg"] = previous
-    assert result.size == source.size
-    assert np.array_equal(np.asarray(result.getchannel("A")), alpha)
-    assert calls == [("session", "u2net"), ("remove", {"model": "u2net"})]
-
-
-def main() -> None:
-    test_backend_registry_and_default()
-    test_ben2_backend_uses_alpha_only()
-    test_birefnet_backend_decodes_logits_and_preserves_rgb()
-    test_birefnet_backend_rejects_ambiguous_channels()
-    test_birefnet_dynamic_resolution_preserves_aspect_and_pads()
-    test_birefnet_dynamic_resolution_has_safe_long_side_cap()
-    test_birefnet_dynamic_resolution_can_disable_cap()
-    test_birefnet_auxiliary_outputs_are_released_before_decode()
-    test_birefnet_selects_highest_resolution_prediction()
-    test_birefnet_static_oom_fallback_rebuilds_with_safe_cap()
-    test_birefnet_model_load_oom_falls_back_to_cpu()
-    test_normalize_image_calls_geometry_and_preserves_source_rgb()
-    test_stage_switches_keep_size_and_report_no_support()
-    test_geometry_guard_runs_before_backend_inference()
-    test_alpha_only_pil_result_and_legacy_alpha_helper()
-    test_process_file_metadata_and_parser_flags()
-    test_optional_rembg_backend_with_fake_module()
-    print("segmentation backend pipeline smoke tests passed")
+            raise AssertionError("A different model must be rejected before loading")
+    model = create_segmentation_backend(device="cpu")
+    assert model.model_name == "ZhengPeng7/BiRefNet_dynamic"
+    assert model.dynamic_resolution
 
 
 if __name__ == "__main__":
-    main()
+    tests = [(name, value) for name, value in globals().items() if name.startswith("test_") and callable(value)]
+    for name, test in tests:
+        test()
+    print(f"{len(tests)} segmentation tests passed")

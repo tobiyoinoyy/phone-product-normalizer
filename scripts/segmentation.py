@@ -1,32 +1,9 @@
 #!/usr/bin/env python3
-"""Run a segmentation backend, then normalize a phone product image.
-
-The default backend is BEN2.  Segmentation and geometry are intentionally
-separate stages::
-
-    backend -> RGBA (continuous alpha) -> geometry_postprocess -> PNG
-
-The selected backend supplies the foreground matte;
-:mod:`geometry_postprocess` optionally removes a connected display stand,
-corrects in-plane roll, and tight-crops the phone.  The geometry stage only
-thresholds a *copy* of alpha for analysis and keeps the original continuous
-alpha at the output edge.
-
-``BiRefNet`` and ``rembg`` are available as explicit comparison backends,
-while the existing ``normalize_phone.py`` rembg-only baseline is deliberately
-unchanged.  BiRefNet's ``*_dynamic`` checkpoints preserve arbitrary source
-aspect ratios; large source frames are safely downscaled before padding to a
-multiple of 32 so accelerator memory does not grow quadratically with camera
-resolution.
-Additional backends can be registered with :func:`register_backend` and passed
-to :func:`normalize_image`.
-"""
+"""BiRefNet_dynamic segmentation with phone stand removal, deskew and alpha-safe crop."""
 
 from __future__ import annotations
 
-import argparse
 import gc
-import io
 import json
 import math
 import os
@@ -34,7 +11,7 @@ import sys
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -101,7 +78,7 @@ try:
         tight_crop,
         validate_geometry_size,
     )
-except ImportError:  # direct ``python scripts/normalize_ben2.py`` execution
+except ImportError:  # direct ``python scripts/segmentation.py`` execution
     from geometry_postprocess import (
         DEFAULT_MAX_GEOMETRY_PIXELS,
         GeometryConfig,
@@ -117,9 +94,7 @@ except ImportError:  # direct ``python scripts/normalize_ben2.py`` execution
     )
 
 
-DEFAULT_BEN2_MODEL = "PramaLLC/BEN2"
-DEFAULT_REMBG_MODEL = "u2net"
-DEFAULT_BIREFNET_MODEL = "ZhengPeng7/BiRefNet"
+DEFAULT_BIREFNET_MODEL = "ZhengPeng7/BiRefNet_dynamic"
 DEFAULT_BIREFNET_RESOLUTION = (1024, 1024)
 # ``BiRefNet_dynamic`` accepts arbitrary image shapes, but its decoder keeps
 # several full-resolution feature maps alive.  Feeding a 2.7K camera frame
@@ -129,34 +104,6 @@ DEFAULT_BIREFNET_RESOLUTION = (1024, 1024)
 DEFAULT_BIREFNET_MAX_SIDE = 1024
 DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE = 1024
 SUPPORTED_DEVICES = ("auto", "cpu", "cuda", "mps")
-
-
-def _is_birefnet_dynamic_model(model_name: str) -> bool:
-    """Return whether a BiRefNet checkpoint supports arbitrary input shapes."""
-
-    return "dynamic" in str(model_name).strip().lower()
-
-
-def _default_birefnet_resolution(model_name: str) -> Optional[Tuple[int, int]]:
-    """Return the official input shape for a named BiRefNet checkpoint.
-
-    The model cards recommend different resolutions for the HR and lite-2K
-    variants.  Keeping those defaults here prevents a caller who only changes
-    ``--model`` from accidentally running a high-resolution checkpoint at the
-    standard 1024² shape.  ``None`` is reserved for dynamic checkpoints.
-    """
-
-    key = str(model_name).strip().lower().replace("_", "-")
-    if "dynamic" in key:
-        return None
-    if "lite-2k" in key or "lite2k" in key:
-        # The upstream handler expresses this as (height, width).
-        return (1440, 2560)
-    if "-hr" in key or key.endswith("hr"):
-        return (2048, 2048)
-    if "reso-512" in key or "512x512" in key:
-        return (512, 512)
-    return DEFAULT_BIREFNET_RESOLUTION
 
 
 def parse_birefnet_resolution(value: Any) -> Optional[Tuple[int, int]]:
@@ -288,12 +235,9 @@ def _bounded_birefnet_resolution(
 ) -> Tuple[int, int]:
     """Return a fixed-model resolution bounded by a long-side cap.
 
-    The named HR/lite-2K checkpoints use a fixed *default* shape, but their
-    convolutional/Swin implementation can still evaluate a smaller
-    block-aligned shape.  This helper is used only for an accelerator OOM
-    retry, where protecting the host from another multi-gigabyte allocation is
-    more important than retaining the checkpoint's preferred training size.
-    Passing ``None`` deliberately preserves the caller's exact fixed shape.
+    On an accelerator OOM retry, cap an explicitly requested fixed input
+    size to avoid repeating the same large allocation on the host.
+    Passing ``None`` preserves the requested shape.
     """
 
     height, width = (int(resolution[0]), int(resolution[1]))
@@ -592,42 +536,13 @@ class SegmentationBackend:
         _release_torch_memory(device)
 
 
-class Ben2Backend(SegmentationBackend):
-    """Official open-source BEN2 Base inference backend."""
-
-    name = "ben2"
-
-    def __init__(
-        self,
-        model_name: str = DEFAULT_BEN2_MODEL,
-        device: str = "auto",
-        model: Any = None,
-        **kwargs: Any,
-    ) -> None:
-        del kwargs
-        self.requested_device = str(device)
-        super().__init__(model_name=model_name, device=resolve_device(device))
-        self._model = model
-
-    @property
-    def model(self) -> Any:
-        if self._model is None:
-            self._model = _load_ben2_model(self.model_name, self.device)
-        return self._model
-
-    def segment(self, image: Image.Image) -> Image.Image:
-        source = _prepare_image(image)
-        result = self.model.inference(source, refine_foreground=False)
-        return _rgba_with_alpha(source, _foreground_alpha(result, source.size))
-
-
 def _load_birefnet_model(model_name: str, device: str) -> Any:
     """Load a BiRefNet checkpoint through its official HF remote code.
 
     BiRefNet publishes a Transformers-compatible model whose implementation is
     stored alongside the checkpoint.  Importing Transformers lazily keeps the
-    rembg-only baseline lightweight, while an explicit ``--backend birefnet``
-    gives a clear dependency error when the optional stack is not installed.
+    geometry-only operations lightweight, while inference
+    gives a clear dependency error when the inference dependencies are not installed.
     """
 
     try:
@@ -636,7 +551,7 @@ def _load_birefnet_model(model_name: str, device: str) -> Any:
     except ImportError as exc:  # pragma: no cover - dependency-specific path
         raise RuntimeError(
             "BiRefNet requires transformers, accelerate and the model dependencies; "
-            "install requirements-birefnet.txt"
+            "install requirements.txt"
         ) from exc
 
     try:
@@ -647,7 +562,7 @@ def _load_birefnet_model(model_name: str, device: str) -> Any:
     except Exception as exc:
         raise RuntimeError(
             f"could not load BiRefNet model {model_name!r}; "
-            "check the Hugging Face model id, network access, and optional dependencies"
+            "check the Hugging Face model id, network access, and installed dependencies"
         ) from exc
     if model is None:
         raise RuntimeError(f"BiRefNet returned no model for {model_name!r}")
@@ -836,11 +751,10 @@ def _birefnet_alpha(
 class BiRefNetBackend(SegmentationBackend):
     """BiRefNet general-purpose foreground segmentation backend.
 
-    The official inference recipe resizes RGB input to 1024×1024, normalizes
+    The dynamic inference path preserves aspect ratio and normalizes
     with ImageNet statistics, runs the final logits through sigmoid, and then
     restores the mask to the source dimensions.  We retain the source RGB
-    pixels and use only this continuous mask as alpha, matching the BEN2
-    contract consumed by the geometry stage.
+    pixels and use only this continuous mask as alpha, for the geometry stage.
     """
 
     name = "birefnet"
@@ -858,6 +772,8 @@ class BiRefNetBackend(SegmentationBackend):
         **kwargs: Any,
     ) -> None:
         del kwargs
+        if model_name != DEFAULT_BIREFNET_MODEL:
+            raise ValueError("Only BiRefNet_dynamic is supported")
         self.requested_device = str(device)
         super().__init__(model_name=model_name, device=resolve_device(device))
         self.max_inference_side = parse_birefnet_max_side(max_inference_side)
@@ -866,21 +782,19 @@ class BiRefNetBackend(SegmentationBackend):
         self.fallback_to_cpu = bool(fallback_to_cpu)
         self.fallback_count = 0
         parsed_resolution = parse_birefnet_resolution(resolution)
-        default_resolution = _default_birefnet_resolution(model_name)
         if (
             parsed_resolution is not None
-            and _is_birefnet_dynamic_model(model_name)
             and any(int(value) % 32 for value in parsed_resolution)
         ):
             raise ValueError(
                 "an explicit resolution for BiRefNet_dynamic must be divisible by 32; "
                 "use --birefnet-resolution auto to pad arbitrary source dimensions"
             )
-        self.dynamic_resolution = parsed_resolution is None and default_resolution is None
+        self.dynamic_resolution = parsed_resolution is None
         self.resolution = (
             None
             if self.dynamic_resolution
-            else (parsed_resolution or default_resolution or DEFAULT_BIREFNET_RESOLUTION)
+            else parsed_resolution
         )
         self._model = model
         # A backend owns one large model/allocator context.  Serializing calls
@@ -894,7 +808,7 @@ class BiRefNetBackend(SegmentationBackend):
         # Once an accelerator OOM has forced a CPU retry, keep using the CPU
         # fallback cap for the rest of this backend's lifetime.  Otherwise the
         # next image in a batch would silently return to an unbounded dynamic
-        # shape (or the HR/lite-2K fixed shape) and recreate the memory spike.
+        # shape (or an explicit fixed shape) and recreate the memory spike.
         self._cpu_fallback_active = False
         self._failed_reason: Optional[str] = None
 
@@ -968,7 +882,7 @@ class BiRefNetBackend(SegmentationBackend):
                 from torchvision import transforms
             except ImportError as exc:  # pragma: no cover - optional dependency
                 raise RuntimeError(
-                    "BiRefNet requires torchvision; install requirements-birefnet.txt"
+                    "BiRefNet requires torchvision; install requirements.txt"
                 ) from exc
             transform = transforms.Compose(
                 [
@@ -992,7 +906,7 @@ class BiRefNetBackend(SegmentationBackend):
             from torchvision import transforms
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError(
-                "BiRefNet requires torchvision; install requirements-birefnet.txt"
+                "BiRefNet requires torchvision; install requirements.txt"
             ) from exc
         self._dynamic_transform = transforms.Compose(
             [
@@ -1086,7 +1000,7 @@ class BiRefNetBackend(SegmentationBackend):
         try:
             import torch
         except ImportError as exc:  # pragma: no cover - model loading already needs it
-            raise RuntimeError("BiRefNet requires torch; install requirements-birefnet.txt") from exc
+            raise RuntimeError("BiRefNet requires torch; install requirements.txt") from exc
         # Keep all accelerator tensors scoped to this method.  In particular,
         # a list of auxiliary BiRefNet predictions can otherwise survive until
         # Python's next GC cycle and make an accelerator memory footprint climb
@@ -1176,8 +1090,7 @@ class BiRefNetBackend(SegmentationBackend):
                         self.last_resolution = tuple(int(v) for v in resolution)
                         self.last_content_size = tuple(int(v) for v in crop_size)
                     else:
-                        # Fixed HR/lite-2K checkpoints advertise a large
-                        # training resolution.  If the accelerator could not
+                        # Explicit input sizes can be large. If the accelerator cannot
                         # hold it, honor the CPU fallback cap instead of
                         # recreating the same 2K/4K tensor on the host.
                         resolution = _bounded_birefnet_resolution(
@@ -1260,159 +1173,30 @@ class BiRefNetBackend(SegmentationBackend):
             self._inference_lock.release()
 
 
-class RembgBackend(SegmentationBackend):
-    """Optional rembg backend for an A/B comparison with BEN2."""
-
-    name = "rembg"
-
-    def __init__(
-        self,
-        model_name: str = DEFAULT_REMBG_MODEL,
-        device: str = "auto",
-        alpha_matting: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        del kwargs
-        super().__init__(model_name=model_name, device=device)
-        self.alpha_matting = bool(alpha_matting)
-        self._session: Any = None
-
-    def segment(self, image: Image.Image) -> Image.Image:
-        try:
-            from rembg import new_session, remove
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "rembg is required for the optional rembg backend; install requirements.txt"
-            ) from exc
-        source = _prepare_image(image)
-        if self._session is None:
-            self._session = new_session(self.model_name)
-        payload = io.BytesIO()
-        source.save(payload, format="PNG")
-        payload_bytes = payload.getvalue()
-        payload.close()
-        result_bytes = remove(
-            payload_bytes,
-            session=self._session,
-            alpha_matting=self.alpha_matting,
-            alpha_matting_foreground_threshold=240,
-            alpha_matting_background_threshold=10,
-            alpha_matting_erode_size=6,
-        )
-        del payload_bytes
-        try:
-            with Image.open(io.BytesIO(result_bytes)) as cutout:
-                alpha = _foreground_alpha(cutout, source.size)
-        finally:
-            del result_bytes
-        return _rgba_with_alpha(source, alpha)
-
-
-BackendFactory = Callable[..., SegmentationBackend]
-_BACKEND_FACTORIES: Dict[str, BackendFactory] = {}
-
-
-def register_backend(name: str, factory: BackendFactory, *, overwrite: bool = False) -> None:
-    """Register a custom backend factory for programmatic use."""
-
-    key = str(name).strip().lower()
-    if not key:
-        raise ValueError("backend name cannot be empty")
-    if key in _BACKEND_FACTORIES and not overwrite:
-        raise ValueError(f"backend {key!r} is already registered")
-    _BACKEND_FACTORIES[key] = factory
-
-
-def available_backends() -> tuple[str, ...]:
-    """Return registered backend names in stable order."""
-
-    return tuple(sorted(_BACKEND_FACTORIES))
-
-
 def create_segmentation_backend(
-    backend: str = "ben2",
+    backend: str = "birefnet",
     *,
     model_name: Optional[str] = None,
     device: str = "auto",
-    alpha_matting: bool = True,
     birefnet_resolution: Optional[Tuple[int, int]] = None,
     birefnet_max_side: Any = DEFAULT_BIREFNET_MAX_SIDE,
     birefnet_cpu_fallback_max_side: Any = DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE,
     birefnet_memory_cleanup: bool = True,
     birefnet_fallback_to_cpu: bool = True,
 ) -> SegmentationBackend:
-    """Construct a registered backend without running inference."""
+    """Construct the sole supported model without running inference."""
 
-    key = str(backend).strip().lower()
-    try:
-        factory = _BACKEND_FACTORIES[key]
-    except KeyError as exc:
-        raise ValueError(
-            f"unknown segmentation backend {backend!r}; choose {', '.join(available_backends())}"
-        ) from exc
-    factory_kwargs: dict[str, Any] = {
-        "device": device,
-        "alpha_matting": alpha_matting,
-    }
-    if model_name is not None:
-        factory_kwargs["model_name"] = model_name
-    elif key == "ben2":
-        factory_kwargs["model_name"] = DEFAULT_BEN2_MODEL
-    elif key == "rembg":
-        factory_kwargs["model_name"] = DEFAULT_REMBG_MODEL
-    elif key == "birefnet":
-        factory_kwargs["model_name"] = DEFAULT_BIREFNET_MODEL
-    if key == "birefnet" and birefnet_resolution is not None:
-        factory_kwargs["resolution"] = birefnet_resolution
-    if key == "birefnet":
-        factory_kwargs.update(
-            {
-                "max_inference_side": birefnet_max_side,
-                "cpu_fallback_max_side": birefnet_cpu_fallback_max_side,
-                "memory_cleanup": birefnet_memory_cleanup,
-                "fallback_to_cpu": birefnet_fallback_to_cpu,
-            }
-        )
-    # A third-party factory may define its own model default.  Do not silently
-    # force BEN2's model id onto it; this is what makes the registry genuinely
-    # extensible for the next model the user evaluates.
-    return factory(**factory_kwargs)
-
-
-def _load_ben2_model(model_name: str, device: str) -> Any:
-    try:
-        import torch
-        from ben2 import AutoModel
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "BEN2 is required for the default backend; install requirements-ben2.txt"
-        ) from exc
-    model = AutoModel.from_pretrained(model_name)
-    if model is None:
-        raise RuntimeError(
-            f"BEN2 could not construct a model from {model_name!r}; "
-            "check the model id or use a BEN2-compatible checkpoint"
-        )
-    if hasattr(model, "to"):
-        moved = model.to(torch.device(device))
-        if moved is not None:
-            model = moved
-    if hasattr(model, "eval"):
-        model.eval()
-    return model
-
-
-def load_ben2(model_name: str = DEFAULT_BEN2_MODEL, device: str = "auto") -> Any:
-    """Backward-compatible helper returning a loaded BEN2 model."""
-
-    return Ben2Backend(model_name=model_name, device=device).model
-
-
-def infer_ben2_alpha(model: Any, image: Image.Image) -> np.ndarray:
-    """Run an injected BEN2-compatible model and return its continuous alpha."""
-
-    source = _prepare_image(image)
-    return _foreground_alpha(model.inference(source, refine_foreground=False), source.size)
+    if backend != "birefnet":
+        raise ValueError("Only BiRefNet_dynamic is supported")
+    if model_name not in (None, DEFAULT_BIREFNET_MODEL):
+        raise ValueError("Only BiRefNet_dynamic is supported")
+    return BiRefNetBackend(
+        device=device, resolution=birefnet_resolution,
+        max_inference_side=birefnet_max_side,
+        cpu_fallback_max_side=birefnet_cpu_fallback_max_side,
+        memory_cleanup=birefnet_memory_cleanup,
+        fallback_to_cpu=birefnet_fallback_to_cpu,
+    )
 
 
 @dataclass(frozen=True)
@@ -1425,8 +1209,8 @@ class NormalizationInfo:
     crop_box: Tuple[int, int, int, int]
     input_size: Tuple[int, int]
     output_size: Tuple[int, int]
-    backend: str = "ben2"
-    model: str = DEFAULT_BEN2_MODEL
+    backend: str = "birefnet"
+    model: str = DEFAULT_BIREFNET_MODEL
     device: str = "auto"
     angle_degrees: Optional[float] = None
     support_threshold_hits: int = 0
@@ -1496,7 +1280,7 @@ def normalize_rgba(
 ) -> tuple[Image.Image, NormalizationInfo]:
     """Normalize an already-segmented alpha without running a model.
 
-    This helper is useful when comparing BEN2 masks or writing a custom
+    This helper is useful when comparing BiRefNet_dynamic masks or writing a custom
     backend.  It deliberately uses the same geometry path as ``process_file``.
     """
 
@@ -1586,10 +1370,9 @@ def normalize_image(
     image: Image.Image,
     *,
     backend: Optional[Any] = None,
-    backend_name: str = "ben2",
+    backend_name: str = "birefnet",
     model_name: Optional[str] = None,
     device: str = "auto",
-    alpha_matting: bool = True,
     birefnet_resolution: Optional[Tuple[int, int]] = None,
     birefnet_max_side: Any = DEFAULT_BIREFNET_MAX_SIDE,
     birefnet_cpu_fallback_max_side: Any = DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE,
@@ -1643,7 +1426,6 @@ def normalize_image(
                 backend_name,
                 model_name=model_name,
                 device=device,
-                alpha_matting=alpha_matting,
                 birefnet_resolution=birefnet_resolution,
                 birefnet_max_side=birefnet_max_side,
                 birefnet_cpu_fallback_max_side=birefnet_cpu_fallback_max_side,
@@ -1763,10 +1545,9 @@ def process_file(
     input_path: Path,
     output_path: Path,
     *,
-    backend: str = "ben2",
+    backend: str = "birefnet",
     model_name: Optional[str] = None,
     device: str = "auto",
-    alpha_matting: bool = True,
     birefnet_resolution: Optional[Tuple[int, int]] = None,
     birefnet_max_side: Any = DEFAULT_BIREFNET_MAX_SIDE,
     birefnet_cpu_fallback_max_side: Any = DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE,
@@ -1816,7 +1597,6 @@ def process_file(
             backend_name=backend,
             model_name=model_name,
             device=device,
-            alpha_matting=alpha_matting,
             geometry_config=config,
             birefnet_resolution=birefnet_resolution,
             birefnet_max_side=birefnet_max_side,
@@ -1838,138 +1618,3 @@ def process_file(
             encoding="utf-8",
         )
     return info
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path)
-    parser.add_argument("output", type=Path)
-    parser.add_argument(
-        "--backend", default="ben2",
-        help="segmentation backend (default: ben2; built-ins: ben2, birefnet, rembg)",
-    )
-    parser.add_argument(
-        "--model", default=None,
-        help=(
-            "model id/name (BEN2 default: PramaLLC/BEN2; "
-            "BiRefNet default: ZhengPeng7/BiRefNet; rembg default: u2net)"
-        ),
-    )
-    parser.add_argument(
-        "--birefnet-resolution",
-        default=None,
-        metavar="RESOLUTION",
-        help=(
-            "BiRefNet input size, e.g. 1024 or 1024x1024; use 'auto' with "
-            "a *_dynamic checkpoint to preserve aspect ratio"
-        ),
-    )
-    parser.add_argument(
-        "--birefnet-max-side",
-        default=str(DEFAULT_BIREFNET_MAX_SIDE),
-        metavar="PIXELS",
-        help=(
-            "dynamic BiRefNet long-side safety cap (default: "
-            f"{DEFAULT_BIREFNET_MAX_SIDE}; use 'none' to disable)"
-        ),
-    )
-    parser.add_argument(
-        "--birefnet-cpu-fallback-max-side",
-        default=str(DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE),
-        metavar="PIXELS",
-        help=(
-            "long-side cap used after an MPS out-of-memory fallback "
-            f"(default: {DEFAULT_BIREFNET_CPU_FALLBACK_MAX_SIDE})"
-        ),
-    )
-    parser.add_argument(
-        "--max-geometry-pixels",
-        default=str(DEFAULT_MAX_GEOMETRY_PIXELS),
-        metavar="PIXELS",
-        help=(
-            "full-resolution geometry pixel guard (default: "
-            f"{DEFAULT_MAX_GEOMETRY_PIXELS}; use 'none' to disable)"
-        ),
-    )
-    parser.add_argument(
-        "--no-memory-cleanup",
-        action="store_true",
-        help="do not run Python/accelerator cache cleanup after each BiRefNet image",
-    )
-    parser.add_argument(
-        "--no-cpu-fallback",
-        action="store_true",
-        help="fail on an MPS out-of-memory error instead of retrying on CPU",
-    )
-    parser.add_argument(
-        "--device", default="auto", choices=SUPPORTED_DEVICES,
-        help="BEN2/BiRefNet inference device (default: auto; ignored by rembg)",
-    )
-    parser.add_argument("--geometry-threshold", type=int, default=32)
-    parser.add_argument("--crop-threshold", type=int, default=8)
-    parser.add_argument("--max-deskew-degrees", type=float, default=45.0)
-    parser.add_argument(
-        "--support-min-confidence", "--confidence-floor",
-        dest="support_min_confidence", type=float, default=0.55,
-    )
-    parser.add_argument("--require-support-border", action="store_true")
-    parser.add_argument("--no-support-removal", action="store_true")
-    parser.add_argument("--no-deskew", action="store_true")
-    parser.add_argument("--no-tight-crop", action="store_true")
-    parser.add_argument(
-        "--no-alpha-matting",
-        action="store_true",
-        help="disable rembg alpha matting (ignored by BEN2 and BiRefNet)",
-    )
-    parser.add_argument("--metadata", type=Path)
-    return parser
-
-
-def main(argv: Optional[Sequence[str]] = None) -> None:
-    args = _build_parser().parse_args(argv)
-    try:
-        birefnet_resolution = parse_birefnet_resolution(args.birefnet_resolution)
-        birefnet_max_side = parse_birefnet_max_side(args.birefnet_max_side)
-        birefnet_cpu_fallback_max_side = parse_birefnet_max_side(
-            args.birefnet_cpu_fallback_max_side
-        )
-        max_geometry_pixels = parse_max_geometry_pixels(args.max_geometry_pixels)
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
-    info = process_file(
-        args.input,
-        args.output,
-        backend=args.backend,
-        model_name=args.model,
-        device=args.device,
-        alpha_matting=not args.no_alpha_matting,
-        birefnet_resolution=birefnet_resolution,
-        birefnet_max_side=birefnet_max_side,
-        birefnet_cpu_fallback_max_side=birefnet_cpu_fallback_max_side,
-        max_geometry_pixels=max_geometry_pixels,
-        birefnet_memory_cleanup=not args.no_memory_cleanup,
-        birefnet_fallback_to_cpu=not args.no_cpu_fallback,
-        geometry_threshold=args.geometry_threshold,
-        crop_threshold=args.crop_threshold,
-        max_deskew_degrees=args.max_deskew_degrees,
-        support_min_confidence=args.support_min_confidence,
-        no_support_removal=args.no_support_removal,
-        no_deskew=args.no_deskew,
-        no_tight_crop=args.no_tight_crop,
-        require_support_border=args.require_support_border,
-        metadata_path=args.metadata,
-    )
-    print(
-        f"saved {args.output} (backend={info.backend}, model={info.model}, "
-        f"support_removed={info.support_removed}, confidence={info.support_confidence:.2f}, "
-        f"rotation={info.rotation_degrees:.3f}°, size={info.output_size})"
-    )
-
-
-register_backend("ben2", Ben2Backend)
-register_backend("birefnet", BiRefNetBackend)
-register_backend("rembg", RembgBackend)
-
-
-if __name__ == "__main__":
-    main()

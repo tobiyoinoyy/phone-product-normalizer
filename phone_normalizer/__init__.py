@@ -1,9 +1,4 @@
-"""Installable API for phone product image normalization.
-
-The high-level package defaults to ``ZhengPeng7/BiRefNet_dynamic`` and keeps
-the older ``scripts/normalize_ben2.py`` command available for compatibility.
-Heavy model libraries are loaded only when a backend is instantiated.
-"""
+"""BiRefNet_dynamic phone product image normalization API."""
 
 from .api import (
     DEFAULT_MAX_GEOMETRY_PIXELS,
@@ -17,12 +12,10 @@ from .api import (
     Normalizer,
     NormalizerConfig,
     ProcessingInfo,
-    available_backends,
     collect_image_paths,
     create_segmentation_backend,
     process_many,
     parse_max_geometry_pixels,
-    register_backend,
     validate_geometry_size,
 )
 
@@ -38,13 +31,11 @@ __all__ = [
     "Normalizer",
     "NormalizerConfig",
     "ProcessingInfo",
-    "available_backends",
     "collect_image_paths",
     "create_segmentation_backend",
     "process_many",
     "parse_max_geometry_pixels",
-    "register_backend",
     "validate_geometry_size",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -47,7 +47,7 @@ def main() -> None:
     probe = textwrap.dedent(
         """
         import os
-        import scripts.normalize_ben2
+        import scripts.segmentation
         assert os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] == '0.24'
         import torch
         torch.mps.current_allocated_memory()

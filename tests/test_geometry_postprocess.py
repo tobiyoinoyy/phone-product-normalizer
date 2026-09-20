@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for the optional BEN2 geometry stage."""
+"""Offline tests for the optional BiRefNet_dynamic geometry stage."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def synthetic_phone() -> np.ndarray:
     draw.rounded_rectangle((55, 28, 264, 350), radius=18, fill=255)
     # The stand is intentionally not centered exactly on the phone.
     draw.rectangle((112, 350, 212, 479), fill=255)
-    # A tiny blur emulates BEN2's continuous matte without changing the
+    # A tiny blur emulates BiRefNet_dynamic's continuous matte without changing the
     # geometry threshold used by the detector.
     from PIL import ImageFilter
 

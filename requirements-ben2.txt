@@ -1,6 +1,0 @@
-# BEN2 pipeline dependencies.  The original requirements.txt remains the
-# lightweight rembg-only baseline; it is included here for the optional A/B
-# backend as well.
--r requirements.txt
-opencv-python-headless>=4.8
-git+https://github.com/PramaLLC/BEN2.git

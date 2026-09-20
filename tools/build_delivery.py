@@ -33,13 +33,11 @@ DEVELOPER_FILES = (
     ".gitignore",
     "README.md",
     "DELIVERY.md",
-    "DELIVERY_AUDIT.md",
     "开发交付说明.md",
+    "设计师使用说明.md",
     "SKILL.md",
     "pyproject.toml",
     "requirements.txt",
-    "requirements-ben2.txt",
-    "requirements-birefnet.txt",
     # Keep the macOS launcher with the full source/test bundle as well.  The
     # developer package ships ``tests/test_macos_entry.py``; omitting the
     # launcher would make that otherwise valid package-level smoke test fail
@@ -49,19 +47,18 @@ DEVELOPER_FILES = (
     "phone_normalizer",
     "scripts",
     "tests",
-    "research",
     "tools",
 )
 
 DESIGNER_FILES = (
     ".gitignore",
     "设计师使用说明.md",
-    "requirements-birefnet.txt",
+    "requirements.txt",
     "手机图片一键处理.command",
     "scripts/__init__.py",
     "scripts/batch_normalize.py",
     "scripts/geometry_postprocess.py",
-    "scripts/normalize_ben2.py",
+    "scripts/segmentation.py",
     "scripts/phone_normalizer_gui.py",
     "scripts/phone_normalizer_macos.applescript",
 )

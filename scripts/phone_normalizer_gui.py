@@ -2,7 +2,7 @@
 """一个无需命令行知识的手机商品图处理窗口（macOS/Windows/Linux）。
 
 GUI 只是批处理入口的外壳，真正的抠图、去支架、摆正和裁切仍由
-``normalize_ben2.py`` 完成。默认模型是 ``BiRefNet_dynamic``。
+``segmentation.py`` 完成。默认模型是 ``BiRefNet_dynamic``。
 """
 
 from __future__ import annotations
@@ -91,7 +91,6 @@ class NormalizerWindow:
         self._failed_count = 0
 
         self.output_var = tk.StringVar(value=str(DEFAULT_OUTPUT_DIR))
-        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
         self.device_var = tk.StringVar(value="auto")
         self.recursive_var = tk.BooleanVar(value=True)
         self.metadata_var = tk.BooleanVar(value=True)
@@ -198,14 +197,7 @@ class NormalizerWindow:
         model_row = tk.Frame(settings)
         model_row.pack(fill="x")
         tk.Label(model_row, text="抠图模型", width=10, anchor="w", font=("PingFang SC", 10)).pack(side="left")
-        self.model_combo = ttk.Combobox(
-            model_row,
-            textvariable=self.model_var,
-            values=("ZhengPeng7/BiRefNet_dynamic", "ZhengPeng7/BiRefNet"),
-            state="readonly",
-            width=31,
-        )
-        self.model_combo.pack(side="left")
+        ttk.Label(model_row, text="BiRefNet_dynamic", width=31).pack(side="left")
         tk.Label(model_row, text="设备", width=7, anchor="e", font=("PingFang SC", 10)).pack(side="left", padx=(18, 0))
         self.device_combo = ttk.Combobox(
             model_row,
@@ -359,7 +351,6 @@ class NormalizerWindow:
             widget.configure(state=state)
         self.cancel_button.configure(state=("disabled" if enabled else "normal"))
         combo_state = "readonly" if enabled else "disabled"
-        self.model_combo.configure(state=combo_state)
         self.device_combo.configure(state=combo_state)
         self.recursive_check.configure(state=state)
         self.metadata_check.configure(state=state)
@@ -535,7 +526,7 @@ class NormalizerWindow:
         args = (
             tuple(self.paths),
             output_dir,
-            self.model_var.get().strip() or DEFAULT_MODEL,
+            DEFAULT_MODEL,
             self.device_var.get().strip() or "auto",
             bool(self.recursive_var.get()),
             bool(self.metadata_var.get()),

@@ -1,14 +1,14 @@
 #!/bin/bash
 # 双击打开窗口，或把图片/文件夹直接拖到这个文件上。
 # Keep this launcher dependency-light: the Python GUI/batch code lives in
-# scripts/ and the existing normalize_ben2.py entry point is left untouched.
+# scripts/ provide BiRefNet_dynamic inference and geometry processing.
 
 set -u
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 PYTHON="$VENV_DIR/bin/python"
-REQUIREMENTS="$PROJECT_DIR/requirements-birefnet.txt"
+REQUIREMENTS="$PROJECT_DIR/requirements.txt"
 RESULTS_DIR="$PROJECT_DIR/outputs/结果"
 
 # BiRefNet_dynamic is deliberately run at a bounded input size by the Python

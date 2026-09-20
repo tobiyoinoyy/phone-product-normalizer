@@ -4,53 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "phone-product-normalizer"
-version = "0.1.0"
-description = "Selectable segmentation and geometry pipeline for phone product photos"
+version = "0.2.0"
+description = "BiRefNet_dynamic phone product cutout and geometry pipeline"
 readme = "DELIVERY.md"
 requires-python = ">=3.9"
 dependencies = [
   "Pillow>=10.0",
-  "numpy>=1.24",
+  "numpy<2",
+  "torch>=2.5",
+  "torchvision>=0.20",
+  "transformers>=4.45,<5",
+  "accelerate>=0.30",
+  "huggingface-hub>=0.25",
+  "safetensors>=0.4",
+  "timm>=1.0",
+  "kornia>=0.7",
+  "einops>=0.7",
   "opencv-python-headless>=4.8",
-]
-
-[project.optional-dependencies]
-birefnet = [
-  "numpy<2",
-  "torch>=2.5",
-  "torchvision>=0.20",
-  "transformers>=4.45,<5",
-  "accelerate>=0.30",
-  "huggingface-hub>=0.25",
-  "safetensors>=0.4",
-  "timm>=1.0",
-  "kornia>=0.7",
-  "einops>=0.7",
-]
-ben2 = [
-  "torch>=2.5",
-  "torchvision>=0.20",
-  "huggingface-hub>=0.25",
-  "ben2 @ git+https://github.com/PramaLLC/BEN2.git",
-]
-rembg = [
-  "rembg>=2.0",
-  "onnxruntime>=1.16",
-]
-all = [
-  "numpy<2",
-  "torch>=2.5",
-  "torchvision>=0.20",
-  "transformers>=4.45,<5",
-  "accelerate>=0.30",
-  "huggingface-hub>=0.25",
-  "safetensors>=0.4",
-  "timm>=1.0",
-  "kornia>=0.7",
-  "einops>=0.7",
-  "rembg>=2.0",
-  "onnxruntime>=1.16",
-  "ben2 @ git+https://github.com/PramaLLC/BEN2.git",
 ]
 
 [project.scripts]

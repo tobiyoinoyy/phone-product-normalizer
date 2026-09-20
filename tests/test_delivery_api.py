@@ -61,8 +61,6 @@ def main() -> None:
 
     parser = build_parser()
     args = parser.parse_args(["photos", "--output-dir", "out", "--manifest", "out/manifest.json"])
-    assert args.backend == "birefnet"
-    assert args.model is None
     assert args.birefnet_resolution == "auto"
     assert args.max_geometry_pixels == "auto"
     assert args.manifest == Path("out/manifest.json")
@@ -97,7 +95,7 @@ def main() -> None:
 
         fake = FakeBackend()
         normalizer = Normalizer(
-            NormalizerConfig(backend="fake", model="fake-model", device="cpu"),
+            NormalizerConfig(device="cpu"),
             backend_instance=fake,
         )
         # The wrapper can be used as a context manager and detaches an
@@ -108,7 +106,7 @@ def main() -> None:
         assert normalizer._backend is None
         # Recreate a wrapper for the batch assertions below.
         normalizer = Normalizer(
-            NormalizerConfig(backend="fake", model="fake-model", device="cpu"),
+            NormalizerConfig(device="cpu"),
             backend_instance=fake,
         )
         # Put the destination below the input root.  Its pre-existing PNG must

@@ -23,7 +23,7 @@ from scripts.batch_normalize import (
     _output_paths,
     collect_image_paths,
 )
-from scripts.normalize_ben2 import NormalizationInfo
+from scripts.segmentation import NormalizationInfo
 
 
 def main() -> None:
