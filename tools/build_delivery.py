@@ -48,6 +48,7 @@ DEVELOPER_FILES = (
     "scripts",
     "tests",
     "tools",
+    "docs",
 )
 
 DESIGNER_FILES = (

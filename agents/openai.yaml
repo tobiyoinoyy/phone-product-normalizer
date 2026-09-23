@@ -1,4 +1,4 @@
 interface:
   display_name: "Phone Product Normalizer"
-  short_description: "Cut out and straighten phone photos with BiRefNet_dynamic"
-  default_prompt: "Use BiRefNet_dynamic to remove the background and connected stand, straighten each phone, and return tight transparent PNG cutouts."
+  short_description: "Precisely crop six phone views and align approved UV profiles"
+  default_prompt: "Use BiRefNet_dynamic to process phone photos, preserve defects and soft alpha, and return tight transparent PNGs. For six-view UV work, use the precise entry point and the user's approved profile when available, then check alignment on the mesh."

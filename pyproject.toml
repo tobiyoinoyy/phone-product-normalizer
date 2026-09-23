@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "phone-product-normalizer"
-version = "0.2.0"
+version = "0.3.0"
 description = "BiRefNet_dynamic phone product cutout and geometry pipeline"
 readme = "DELIVERY.md"
 requires-python = ">=3.9"
@@ -21,10 +21,15 @@ dependencies = [
   "kornia>=0.7",
   "einops>=0.7",
   "opencv-python-headless>=4.8",
+  "scipy>=1.10",
 ]
 
 [project.scripts]
 phone-normalizer = "phone_normalizer.cli:main"
+phone-normalizer-uv = "phone_normalizer.uv_cli:main"
+
+[tool.setuptools.package-data]
+phone_normalizer = ["profiles/*.json"]
 
 [tool.setuptools.packages.find]
 where = ["."]

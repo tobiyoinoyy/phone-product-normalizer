@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "profile_id": "iphone12pro-user-crop-v1",
+  "body_bbox_method": "alpha128_largest_component_median_central70pct_long_edges",
+  "faces": {
+    "front": {
+      "reference_size": [974, 1995],
+      "reference_body_bbox": [5.0, 0.0, 969.0, 1995.0],
+      "crop_xyxy": [10, 4, 967, 1989],
+      "orientation_quarter_turns": 0
+    },
+    "back": {
+      "reference_size": [971, 1995],
+      "reference_body_bbox": [5.0, 0.0, 968.0, 1995.0],
+      "crop_xyxy": [6, 2, 966, 1988],
+      "orientation_quarter_turns": 0
+    },
+    "left": {
+      "reference_size": [111, 1906],
+      "reference_body_bbox": [9.0, 0.0, 109.0, 1906.0],
+      "crop_xyxy": [1, 1, 105, 1905],
+      "orientation_quarter_turns": 1
+    },
+    "right": {
+      "reference_size": [120, 1880],
+      "reference_body_bbox": [2.0, 0.0, 99.0, 1880.0],
+      "crop_xyxy": [4, 2, 120, 1879],
+      "orientation_quarter_turns": -1
+    },
+    "top": {
+      "reference_size": [1019, 138],
+      "reference_body_bbox": [0.0, 23.0, 1019.0, 137.0],
+      "crop_xyxy": [1, 2, 1018, 132],
+      "orientation_quarter_turns": 0
+    },
+    "bottom": {
+      "reference_size": [1048, 117],
+      "reference_body_bbox": [0.0, 1.0, 1048.0, 115.0],
+      "crop_xyxy": [1, 1, 1047, 113],
+      "orientation_quarter_turns": 0
+    }
+  }
+}
